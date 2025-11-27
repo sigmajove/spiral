@@ -10,7 +10,7 @@ import sys
 # The arguments to the program are the filename followed by ten numbers.
 # The numbers are the attributes of the pentagon in counterclockwise order:
 # angle, side length, angle, side length, angle, side length...
-# The angles are specified in degrees. 
+# The angles are specified in degrees.
 
 # However, there is one wrinkle. Ten parameters overspecifies a pentagon.
 # One of the angles should be specified as zero; the program will create
@@ -31,7 +31,8 @@ import sys
 
 # You may have to experiment with the export-dpi option and possibly the
 # line_width parameter in the code to get a satisfactory result. A program
-# like Adobe Illustrator is a more flexible and convenient, but it isn't free. 
+# like Adobe Illustrator is a more flexible and convenient, but it isn't free.
+
 
 def main():
     try:
@@ -170,11 +171,16 @@ def gen_pentagon(sides, angles):
 
 
 def make_spiral(filename, sides, angles):
+    pentagon = gen_pentagon(sides, angles)
+    scale_factor = math.dist(pentagon[3], pentagon[4]) / math.dist(
+        pentagon[1], pentagon[2]
+    )
+    if scale_factor >= 1:
+        raise Exception("Spiral will not converge")
+
     with SVGWriter(filename, line_width=0.1) as ctx:
-        pentagon = gen_pentagon(sides, angles)
         limit = math.dist(pentagon[1], pentagon[2]) / 100
         draw_polygon(ctx, pentagon)
-        scale_factor = sides[3] / sides[1]
         while True:
             scaled = [
                 (v[0] * scale_factor, v[1] * scale_factor) for v in pentagon
