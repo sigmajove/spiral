@@ -8,7 +8,7 @@ import sys
 # Given the dimensions of an initial pentagon, creates a vector graphics
 # image of a "snake" created by wrapping smaller and smaller similar pentagons.
 # The arguments to the program are the filename followed by ten numbers.
-# The numbers are the attributes of the pentagon in clockwise order:
+# The numbers are the attributes of the pentagon in counterclockwise order:
 # angle, side length, angle, side length, angle, side length...
 # The angles are specified in degrees. 
 
