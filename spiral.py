@@ -19,8 +19,8 @@ import sys
 # Only three of the five side lengths should be specified. The other two
 # should be zero. The program will create the correct lengths to make the
 # angles work out. It is not possible to construct a pentagon from all
-# specified lengths. If the lengths are not valid, the program will produce
-# a unhelpful message.
+# possible lengths. If the lengths are not valid, the program will produce
+# an unhelpful message.
 
 # The program outputs a .svg file to avoid losing fidelity due to pixellation.
 # If a .png file is desired, the output can be converted usin Inkscape
