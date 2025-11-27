@@ -29,8 +29,8 @@ import sys
 #   "c:\Program Files\Inkscape\inkscape.com" -f=filename.svg \
 #   --export-png=filename.png --export-dpi=3000 --export-background=white
 
-# You may have to experiment with the export dpi and possibly the line_width
-# parameter in the code to get a satisfactory result. A program
+# You may have to experiment with the export-dpi option and possibly the
+# line_width parameter in the code to get a satisfactory result. A program
 # like Adobe Illustrator is a more flexible and convenient, but it isn't free. 
 
 def main():
