@@ -1,9 +1,15 @@
+import argparse
 import cairo
+import colorsys
 import math
 import numpy
 import os
 import re
 import sys
+
+from scipy.optimize import minimize
+from scipy.optimize import LinearConstraint
+from scipy.optimize import NonlinearConstraint
 
 # Given the dimensions of an initial pentagon, creates a vector graphics
 # image of a "snake" created by wrapping smaller and smaller similar pentagons.
@@ -36,7 +42,58 @@ import sys
 
 def main():
     try:
-        make_spiral(*process_args())
+        args = process_args()
+        pentagon_arg = args["pentagon"]
+        if pentagon_arg is None:
+            pentagon = solve_pentagon(
+                args["angle"], args["position"], args["period"]
+            )
+        else:
+            pentagon = gen_pentagon(*pentagon_arg)
+
+        scale_factor = math.dist(pentagon[3], pentagon[4]) / math.dist(
+            pentagon[0], pentagon[1]
+        )
+        if scale_factor >= 1:
+            raise Exception(f"{scale_factor=}")
+
+        # The reason for outputting an .svg file is so that we don't
+        # have to worry about the scale of the diagram. Except that we
+        # kind of do. We must specify the line width before we draw
+        # our first line. And at this point, we don't know how big the
+        # final result. So we base the line width on the approximate
+        # dimensions of the first pentagon and hope for the best.
+        pentagon_size = max(
+            max(p[0] for p in pentagon) - min(p[0] for p in pentagon),
+            max(p[1] for p in pentagon) - min(p[1] for p in pentagon),
+        )
+
+        with SVGWriter(
+            args["filename"], line_width=0.005 * pentagon_size
+        ) as ctx:
+            limit = math.dist(pentagon[1], pentagon[2]) / 100
+            hue = 0 if args["color"] else None
+            draw_polygon(ctx, pentagon, hue)
+            iterations = 0
+            while True:
+                if hue is not None:
+                    hue += 55
+                    if hue > 360:
+                        hue -= 360
+                scaled = [
+                    (v[0] * scale_factor, v[1] * scale_factor) for v in pentagon
+                ]
+                r = Rigid(scaled[0], scaled[1], pentagon[4], pentagon[3])
+                next_pentagon = [r.translate(v) for v in scaled]
+                draw_polygon(ctx, next_pentagon, hue)
+                pentagon = next_pentagon
+                if math.dist(pentagon[1], pentagon[2]) <= limit:
+                    break
+                iterations += 1
+                if iterations > 200:
+                    print("overrun")
+                    break
+
     except Exception as e:
         sys.exit(e)
 
@@ -108,12 +165,89 @@ class SVGWriter:
         self.rs.finish()
 
 
-def draw_polygon(ctx, vertices):
+def draw_polygon(ctx, vertices, hue):
+    if hue is not None:
+        ctx.move_to(*vertices[0])
+        for v in vertices[1:]:
+            ctx.line_to(*v)
+        ctx.close_path()
+        ctx.save()
+        ctx.set_source_rgba(*colorsys.hls_to_rgb(hue / 360.0, 0.6, 1.0), 0.75)
+        ctx.fill()
+        ctx.restore()
+
     ctx.move_to(*vertices[0])
     for v in vertices[1:]:
         ctx.line_to(*v)
     ctx.close_path()
     ctx.stroke()
+
+
+def solve_pentagon(angle, position, period):
+    # Cycle of six
+    v2 = (period - 2) * 180.0 / period
+    angles = [angle, v2, 180 - angle, 180 + angle - v2, 180 - angle]
+    print(f"{angles=}")
+
+    theta = 270
+    cosz = []
+    sinz = []
+    for a in angles:
+        cosz.append(math.cos(math.radians(theta)))
+        sinz.append(math.sin(math.radians(theta)))
+        theta = theta + 180 + a
+        while theta >= 360:
+            theta -= 360
+
+    A = numpy.array(cosz[1:])
+    cos_constraint = LinearConstraint(A, -cosz[0], -cosz[0])
+
+    B = numpy.array(sinz[1:])
+    sin_constraint = LinearConstraint(B, -sinz[0], -sinz[0])
+
+    def size_fn(x):
+        b, c, d, e = x
+        return e - (d ** (period - 1)) * (c + b * d)
+
+    size_constraint = NonlinearConstraint(size_fn, 0, 0)
+
+    def mid_fn(x):
+        b, c, d, e = x
+        return c * (position) - (b * d) * (1.0 - position)
+
+    mid_constraint = NonlinearConstraint(mid_fn, 0, 0)
+
+    solution = minimize(
+        lambda x: max(x),
+        numpy.array([0.5, 0.5, 0.5, 0.5]),
+        constraints=[
+            sin_constraint,
+            cos_constraint,
+            size_constraint,
+            mid_constraint,
+        ],
+    )
+
+    all_sides = [1.0] + solution.x.tolist()
+    a, b, c, d, e = all_sides
+    print(f"sides={all_sides}")
+
+
+    v = (0, 0)
+    vertices = [v]
+    theta = 270
+    for i in range(4):
+        side = all_sides[i]
+        next_v = (
+            v[0] + side * math.cos(math.radians(theta)),
+            v[1] + side * math.sin(math.radians(theta)),
+        )
+        theta = theta + 180 + angles[i]
+        while theta >= 360:
+            theta -= 360
+        vertices.append(next_v)
+        v = next_v
+    return vertices
 
 
 # A pentagon can be determined by specifying all five angles,
@@ -123,22 +257,23 @@ def draw_polygon(ctx, vertices):
 # Returns the Cartesian coordinates of the five vertices.
 # The first vertex will be (0, 0)/540
 def gen_pentagon(sides, angles):
-    start_theta = 0
-    theta = start_theta
+    theta = 0
     cosines = []
     sines = []
     for a in angles:
         cosines.append(math.cos(math.radians(theta)))
         sines.append(math.sin(math.radians(theta)))
-        theta = theta + 180 - a
+        theta = theta + 180 + a
+        while theta >= 360:
+            theta -= 360
 
     p0 = sum(cosines[i] * sides[i] for i in range(5) if sides[i])
     p1 = sum(sines[i] * sides[i] for i in range(5) if sides[i])
     a0, b0 = (cosines[i] for i in range(5) if sides[i] == 0)
     a1, b1 = (sines[i] for i in range(5) if sides[i] == 0)
     D = a0 * b1 - a1 * b0
-    if D <= 0:
-        raise Exception("Determinant {D} is not positive")
+    if D == 0:
+        raise Exception("Determinant is zero")
     missing_sides = ((-p0 * b1 + p1 * b0) / D, (-a0 * p1 + a1 * p0) / D)
     if not all(s > 0 for s in missing_sides):
         raise Exception("A computed side is not positive")
@@ -157,74 +292,143 @@ def gen_pentagon(sides, angles):
     # coordinates of the five vertices.
     v = (0, 0)
     vertices = [v]
-    theta = start_theta
+    theta = 270
     for i in range(4):
         next_vertex = (
             v[0] + all_sides[i] * math.cos(math.radians(theta)),
             v[1] + all_sides[i] * math.sin(math.radians(theta)),
         )
-        theta = theta + 180 - angles[i]
+        theta = theta + 180 + angles[i]
+        while theta >= 360:
+            theta -= 360
         vertices.append(next_vertex)
         v = next_vertex
-
     return vertices
 
 
-def make_spiral(filename, sides, angles):
-    pentagon = gen_pentagon(sides, angles)
-    scale_factor = math.dist(pentagon[3], pentagon[4]) / math.dist(
-        pentagon[1], pentagon[2]
-    )
-    if scale_factor >= 1:
-        raise Exception("Spiral will not converge")
-
-    with SVGWriter(filename, line_width=0.1) as ctx:
-        limit = math.dist(pentagon[1], pentagon[2]) / 100
-        draw_polygon(ctx, pentagon)
-        while True:
-            scaled = [
-                (v[0] * scale_factor, v[1] * scale_factor) for v in pentagon
-            ]
-            r = Rigid(scaled[1], scaled[2], pentagon[4], pentagon[3])
-            next_pentagon = [r.translate(v) for v in scaled]
-            draw_polygon(ctx, next_pentagon)
-            pentagon = next_pentagon
-            if math.dist(pentagon[1], pentagon[2]) <= limit:
-                break
-
-
-def process_args():
-    if len(sys.argv) != 12:
-        sys.exit("Expected 11 arguments")
-    filename = sys.argv[1]
+def parse_filename(filename):
     if not filename.endswith(".svg"):
-        raise Exception("Filename should end with .svg")
+        raise argparse.ArgumentTypeError("Filename should end with .svg")
 
     directory = os.path.dirname(filename)
     if directory and not os.path.isdir(directory):
-        raise Exception(f"{filename} is not in a valid directory")
+        raise argparse.ArgumentTypeError(
+            f"{filename} is not in a valid directory"
+        )
+    return filename
 
-    args = []
-    for s in sys.argv[2:]:
-        if not re.match(r"^\d+(\.\d+)?$", s):
-            raise Exception(f"{s} is not a number")
-        args.append(float(s))
-    sides = [args[i] for i in (0, 2, 4, 6, 8)]
-    angles = [args[i] for i in (1, 3, 5, 7, 9)]
 
-    if sides.count(0) != 2:
+def parse_float(arg):
+    if arg == "":
+        raise argparse.ArgumentTypeError("missing argument")
+    if not re.match(r"\d*(\.\d*)?$", arg):
+        raise argparse.ArgumentTypeError(f"{arg} is not a number")
+    return float(arg)
+
+
+def parse_int(arg):
+    if arg == "":
+        raise argparse.ArgumentTypeError("missing argument")
+    if not re.match(r"^\d+$", arg):
+        raise argparse.ArgumentTypeError(f"{arg} is not a number")
+    return int(arg)
+
+
+def parse_pentagon(arg):
+    values = arg.split(",")
+    if len(values) != 10:
+        raise argparse.ArgumentTypeError("does not have 10 values")
+    nums = []
+    for v in values:
+        if v == "":
+            nums.append(0.0)
+        else:
+            nums.append(parse_float(v))
+    sides = [nums[i] for i in (0, 2, 4, 6, 8)]
+    angles = [nums[i] for i in (1, 3, 5, 7, 9)]
+
+    if sides.count(0.0) != 2:
         raise Exception("Two sides should be zero")
 
-    if angles.count(0) != 1:
+    if angles.count(0.0) != 1:
         raise Exception("One angle should be zero")
 
     if sum(angles) >= 540:
         raise Exception("Sum of angles exceeds 540")
 
     # Make the angles add up to 540
-    angles[angles.index(0)] = 540.0 - sum(angles)
+    angles[angles.index(0.0)] = 540.0 - sum(angles)
 
-    return (filename, sides, angles)
+    return (sides, angles)
+
+
+def parse_angle(arg):
+    value = parse_float(arg)
+    if value == 0.0:
+        raise argparse.ArgumentTypeError("Cannot be zero")
+    return value
+
+
+def parse_position(arg):
+    value = parse_float(arg)
+    if not 0.0 <= value <= 1.0:
+        raise argparse.ArgumentTypeError("Must be in range [0..1]")
+    return value
+
+
+def parse_period(arg):
+    value = parse_int(arg)
+    if value <= 2:
+        raise argparse.ArgumentTypeError("Must be at least 3")
+    return value
+
+
+def is_option(name, arg):
+    return name == arg or arg.startswith(f"{name}=")
+
+
+def process_args():
+    parser = argparse.ArgumentParser(
+        description="Produces a spiral of pentagons"
+    )
+    parser.add_argument("filename", type=parse_filename)
+    parser.add_argument(
+        "--pentagon", type=parse_pentagon, help="the dimensions of the pentagon"
+    )
+    parser.add_argument(
+        "--angle",
+        type=parse_angle,
+        default=90.0,
+        help="key angle of the pentagon",
+    )
+    parser.add_argument("--position", type=parse_position, default=0.5)
+    parser.add_argument(
+        "--period",
+        type=parse_period,
+        default=6,
+        help="number of pentagons in one cycle",
+    )
+    parser.add_argument(
+        "--color", action="store_true", help="add colors to the diagram"
+    )
+    args = vars(parser.parse_args())
+
+    # Horrible hack.
+    # It is not easy to have argparse tell us whether an option that has a
+    # default was specified.
+    if args["pentagon"] is not None:
+        for a in sys.argv[1:]:
+            if is_option("--angle", a):
+                raise Exception("--angle and --pentagon cannot both be present")
+            if is_option("--position", a):
+                raise Exception(
+                    "--position and --pentagon cannot both be present"
+                )
+            if is_option("--period", a):
+                raise Exception(
+                    "--period and --pentagon cannot both be present"
+                )
+    return args
 
 
 if __name__ == "__main__":
