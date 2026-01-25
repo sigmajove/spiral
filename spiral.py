@@ -72,24 +72,32 @@ def main():
             args["filename"], line_width=0.005 * pentagon_size
         ) as ctx:
             limit = math.dist(pentagon[1], pentagon[2]) / 100
-            hue = 0 if args["color"] else None
-            draw_polygon(ctx, pentagon, hue)
             iterations = 0
+            period = args["period"]
+
+            def draw(pent):
+                draw_polygon(
+                    ctx,
+                    pent,
+                    (
+                        360.0 * (iterations % period) / float(period)
+                        if args["color"]
+                        else None
+                    ),
+                )
+
+            draw(pentagon)
             while True:
-                if hue is not None:
-                    hue += 55
-                    if hue > 360:
-                        hue -= 360
                 scaled = [
                     (v[0] * scale_factor, v[1] * scale_factor) for v in pentagon
                 ]
                 r = Rigid(scaled[0], scaled[1], pentagon[4], pentagon[3])
                 next_pentagon = [r.translate(v) for v in scaled]
-                draw_polygon(ctx, next_pentagon, hue)
+                iterations += 1
+                draw(next_pentagon)
                 pentagon = next_pentagon
                 if math.dist(pentagon[1], pentagon[2]) <= limit:
                     break
-                iterations += 1
                 if iterations > 200:
                     print("overrun")
                     break
@@ -231,7 +239,6 @@ def solve_pentagon(angle, position, period):
     all_sides = [1.0] + solution.x.tolist()
     a, b, c, d, e = all_sides
     print(f"sides={all_sides}")
-
 
     v = (0, 0)
     vertices = [v]
